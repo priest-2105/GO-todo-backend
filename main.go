@@ -6,6 +6,7 @@ import (
     "log"
     "net/http"
     "os"
+    "strings"
 
     "github.com/joho/godotenv"
     "gorm.io/driver/postgres"
@@ -40,7 +41,7 @@ func main() {
         log.Fatal("migration failed:", err)
     }
 
-	
+    // === List All ===
     http.HandleFunc("/todos", func(w http.ResponseWriter, r *http.Request) {
         var tasks []Task
         if result := db.Find(&tasks); result.Error != nil {
@@ -51,28 +52,109 @@ func main() {
         json.NewEncoder(w).Encode(tasks)
     })
 
-	http.HandleFunc("/todos/add", func(w http.ResponseWriter, r *http.Request) {
+    // === Add New ===
+    http.HandleFunc("/todos/add", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
 
-		if r.Method != http.MethodPost {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
+        var task Task
+        if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+            http.Error(w, "Invalid JSON", http.StatusBadRequest)
+            return
+        }
 
-    var task Task
-    if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-        http.Error(w, "Invalid JSON", http.StatusBadRequest)
-        return
-    }
+        if result := db.Create(&task); result.Error != nil {
+            http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+            return
+        }
 
-    if result := db.Create(&task); result.Error != nil {
-        http.Error(w, result.Error.Error(), http.StatusInternalServerError)
-        return
-    }
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(task)
+    })
 
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(task)
-})
+    // === View One ===
+    http.HandleFunc("/todos/view/", func(w http.ResponseWriter, r *http.Request) {
+        id := strings.TrimPrefix(r.URL.Path, "/todos/view/")
+        var task Task
+        if result := db.First(&task, id); result.Error != nil {
+            http.Error(w, "Task not found", http.StatusNotFound)
+            return
+        }
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(task)
+    })
 
+    // === Delete ===
+    http.HandleFunc("/todos/delete/", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodDelete {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+        id := strings.TrimPrefix(r.URL.Path, "/todos/delete/")
+        if result := db.Delete(&Task{}, id); result.Error != nil {
+            http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+            return
+        }
+        w.WriteHeader(http.StatusOK)
+        w.Write([]byte(`{"message":"Deleted"}`))
+    })
+
+    // === Update Title/Description ===
+    http.HandleFunc("/todos/update/", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPut {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+        id := strings.TrimPrefix(r.URL.Path, "/todos/update/")
+
+        var payload Task
+        if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+            http.Error(w, "Invalid JSON", http.StatusBadRequest)
+            return
+        }
+
+        var task Task
+        if result := db.First(&task, id); result.Error != nil {
+            http.Error(w, "Task not found", http.StatusNotFound)
+            return
+        }
+
+        task.Title = payload.Title
+        task.Description = payload.Description
+        if result := db.Save(&task); result.Error != nil {
+            http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(task)
+    })
+
+    // === Mark as Done ===
+    http.HandleFunc("/todos/done/", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPatch {
+            http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+        id := strings.TrimPrefix(r.URL.Path, "/todos/done/")
+
+        var task Task
+        if result := db.First(&task, id); result.Error != nil {
+            http.Error(w, "Task not found", http.StatusNotFound)
+            return
+        }
+
+        task.Done = true
+        if result := db.Save(&task); result.Error != nil {
+            http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(task)
+    })
 
     log.Println("Server running on http://localhost:8080")
     log.Fatal(http.ListenAndServe(":8080", nil))
